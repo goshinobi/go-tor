@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -34,6 +35,8 @@ type Tor struct {
 	ControlPort   *int    `json:"control_port"`
 	DataDirectory *string `json:"data_directory"`
 	ConfPath      *string `json:"conf_path"`
+	cmd           *exec.Cmd
+	work          bool
 }
 
 func New(c ...string) *Tor {
@@ -93,6 +96,52 @@ func New(c ...string) *Tor {
 		return nil
 	}
 	return tor
+}
+
+func (t *Tor) Start() error {
+	cmd := exec.Command("tor", "-f", *t.ConfPath)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	t.cmd = cmd
+	t.work = true
+	return nil
+}
+
+func (t *Tor) Stop() error {
+	if err := t.cmd.Process.Kill(); err != nil {
+		return err
+	}
+	t.cmd = nil
+	t.work = false
+	return nil
+}
+
+func (t *Tor) Kill() error {
+	if err := t.Stop(); err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(*t.DataDirectory); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(*t.ConfPath); err != nil {
+		return err
+	}
+	t.ID = nil
+	t.SocksPort = nil
+	t.ControlPort = nil
+	t.DataDirectory = nil
+	t.ConfPath = nil
+	t.cmd = nil
+	return nil
+}
+
+func (t *Tor) Reload() error {
+	if err := t.Stop(); err != nil {
+		return err
+	}
+	return t.Start()
 }
 
 func (t Tor) String() string {
