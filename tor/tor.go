@@ -1,6 +1,7 @@
 package tor
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -8,6 +9,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -144,6 +147,39 @@ func (t *Tor) Reload() error {
 	return t.Start()
 }
 
+func (t *Tor) Dial(timeout time.Duration, r string) (con net.Conn, err error) {
+	addr := fmt.Sprintf("127.0.0.1:%s", *t.SocksPort)
+	if oconn, err := net.DialTimeout("tcp", addr, timeout); err == nil {
+		oconn.Write([]byte{ // VERSION_AUTH
+			5, // PROTO_VER5
+			1, //
+			0, // NO_AUTH
+		})
+		buffer := [64]byte{}
+		oconn.Read(buffer[:])
+		buffer[0] = 5 // VER  5
+		buffer[1] = 1 // CMD connect
+		buffer[2] = 0 // RSV
+		buffer[3] = 3 // DOMAINNAME: X'03'
+
+		host, port := splitHostAndPort(r)
+
+		hostBytes := []byte(host)
+		buffer[4] = byte(len(hostBytes))
+		copy(buffer[5:], hostBytes)
+		binary.BigEndian.PutUint16(buffer[5+len(hostBytes):], uint16(port))
+		oconn.Write(buffer[:5+len(hostBytes)+2])
+
+		if n, err := oconn.Read(buffer[:]); n > 1 && err == nil && buffer[1] == 0 {
+			return oconn, nil
+		} else {
+			return nil, fmt.Errorf("connet to socks server %s error: %v", addr, err)
+		}
+	} else {
+		return nil, err
+	}
+}
+
 func (t Tor) String() string {
 	bin, err := json.MarshalIndent(t, "", "    ")
 	if err != nil {
@@ -169,4 +205,13 @@ func getPort() (*int, error) {
 func isExist(name string) bool {
 	_, err := os.Stat(name)
 	return err == nil
+}
+
+func splitHostAndPort(host string) (string, uint16) {
+	if idx := strings.Index(host, ":"); idx < 0 {
+		return host, 80
+	} else {
+		port, _ := strconv.Atoi(host[idx+1:])
+		return host[:idx], uint16(port)
+	}
 }
